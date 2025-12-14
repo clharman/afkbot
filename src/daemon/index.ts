@@ -1,11 +1,19 @@
 import { sessionRegistry, type RegisteredSession } from './session-registry';
 import { AgentAPIClient } from './agentapi-client';
+import { RelayClient } from './relay-client';
 
 const DAEMON_SOCKET = '/tmp/snowfort-daemon.sock';
 const HEALTH_CHECK_INTERVAL = 5000; // 5 seconds
 
+// Configuration (from environment or defaults)
+const RELAY_URL = process.env.SNOWFORT_RELAY_URL || 'ws://localhost:8080';
+const RELAY_TOKEN = process.env.SNOWFORT_TOKEN || 'test-token-123';
+
 // Map of session ID to AgentAPI client
 const clients = new Map<string, AgentAPIClient>();
+
+// Relay client (initialized in startDaemon)
+let relayClient: RelayClient | null = null;
 
 async function handleSessionStart(data: {
   id: string;
@@ -25,14 +33,27 @@ async function handleSessionStart(data: {
 
   sessionRegistry.register(session);
 
+  // Notify relay about new session
+  if (relayClient?.isConnected()) {
+    relayClient.sendSessionStart(data.id, session.name, session.cwd);
+  }
+
   // Create AgentAPI client for this session
   const client = new AgentAPIClient(data.port);
   clients.set(data.id, client);
 
-  // Subscribe to events
+  // Subscribe to events and forward to relay
   client.subscribeToEvents((event) => {
     console.log(`[Daemon] Session ${data.id.slice(0, 8)} event:`, event.type);
-    // TODO: Forward to relay server
+
+    if (relayClient?.isConnected()) {
+      if (event.type === 'message') {
+        const msg = event.data as { content?: string; role?: string };
+        if (msg.content) {
+          relayClient.sendSessionOutput(data.id, msg.content);
+        }
+      }
+    }
   });
 }
 
@@ -43,6 +64,35 @@ async function handleSessionEnd(sessionId: string): Promise<void> {
     clients.delete(sessionId);
   }
   sessionRegistry.unregister(sessionId);
+
+  // Notify relay
+  if (relayClient?.isConnected()) {
+    relayClient.sendSessionEnd(sessionId);
+  }
+}
+
+async function handleRelayMessage(message: { type: string; sessionId?: string; text?: string }): Promise<void> {
+  switch (message.type) {
+    case 'send_input': {
+      if (!message.sessionId || !message.text) return;
+
+      const client = clients.get(message.sessionId);
+      if (client) {
+        console.log(`[Daemon] Forwarding input to session ${message.sessionId.slice(0, 8)}`);
+        try {
+          await client.sendMessage(message.text);
+        } catch (err) {
+          console.error('[Daemon] Failed to send message:', err);
+        }
+      }
+      break;
+    }
+
+    case 'subscribe':
+    case 'unsubscribe':
+      // These are handled by the relay, daemon doesn't need to do anything
+      break;
+  }
 }
 
 async function startUnixSocketServer(): Promise<void> {
@@ -97,10 +147,37 @@ async function healthCheckLoop(): Promise<void> {
         try {
           const status = await client.getStatus();
           const newStatus = status.status === 'stable' ? 'idle' : 'running';
-          sessionRegistry.updateStatus(sessionId, newStatus);
+          const oldStatus = sessionRegistry.get(sessionId)?.status;
+
+          if (oldStatus !== newStatus) {
+            sessionRegistry.updateStatus(sessionId, newStatus);
+
+            // Notify relay of status change
+            if (relayClient?.isConnected()) {
+              relayClient.sendSessionStatus(sessionId, newStatus);
+            }
+          }
         } catch {}
       }
     }
+  }
+}
+
+async function connectToRelay(): Promise<void> {
+  console.log(`[Daemon] Connecting to relay at ${RELAY_URL}...`);
+
+  relayClient = new RelayClient(RELAY_URL, RELAY_TOKEN);
+
+  relayClient.setMessageHandler((message) => {
+    handleRelayMessage(message as any);
+  });
+
+  try {
+    await relayClient.connect();
+    console.log('[Daemon] Connected to relay');
+  } catch (err) {
+    console.warn('[Daemon] Failed to connect to relay:', (err as Error).message);
+    console.warn('[Daemon] Running in offline mode (local only)');
   }
 }
 
@@ -109,11 +186,15 @@ export async function startDaemon(): Promise<void> {
 
   await startUnixSocketServer();
 
+  // Connect to relay server
+  await connectToRelay();
+
   // Start health check loop
   healthCheckLoop();
 
   console.log('[Daemon] Ready.');
   console.log(`[Daemon] Sessions: ${sessionRegistry.size()}`);
+  console.log(`[Daemon] Relay connected: ${relayClient?.isConnected() || false}`);
 
   // Keep process alive
   await new Promise(() => {});
