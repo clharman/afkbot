@@ -9,6 +9,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@clerk/clerk-expo": "^2.19.12",
     "expo": "^54.0.0",
     "expo-device": "~8.0.10",
     "expo-notifications": "~0.32.15",

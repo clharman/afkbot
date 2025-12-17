@@ -1,73 +1,208 @@
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import * as SecureStore from 'expo-secure-store';
-import { useStore } from '@/lib/store';
-import { relay } from '@/lib/relay';
+import { useSignIn, useSignUp } from '@clerk/clerk-expo';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { setToken } = useStore();
-  const [token, setTokenInput] = useState('test-token-123');
-  const [loading, setLoading] = useState(false);
+  const { signIn, setActive: setSignInActive, isLoaded: signInLoaded } = useSignIn();
+  const { signUp, setActive: setSignUpActive, isLoaded: signUpLoaded } = useSignUp();
 
-  async function handleConnect() {
-    if (!token.trim()) {
-      Alert.alert('Error', 'Please enter a token');
-      return;
-    }
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [pendingVerification, setPendingVerification] = useState(false);
+
+  async function handleSignIn() {
+    if (!signInLoaded || !email.trim() || !password.trim()) return;
 
     setLoading(true);
+    setError('');
 
     try {
-      // Connect to relay
-      await relay.connect(token.trim());
+      const result = await signIn.create({
+        identifier: email.trim(),
+        password: password.trim(),
+      });
 
-      // Save token
-      if (Platform.OS === 'web') {
-        localStorage.setItem('snowfort_token', token.trim());
+      if (result.status === 'complete') {
+        await setSignInActive({ session: result.createdSessionId });
+        router.back();
       } else {
-        await SecureStore.setItemAsync('snowfort_token', token.trim());
+        setError('Sign in incomplete. Please try again.');
       }
-      setToken(token.trim());
-
-      router.back();
-    } catch (err) {
-      Alert.alert('Connection Failed', (err as Error).message);
+    } catch (err: any) {
+      console.error('Sign in error:', err);
+      setError(err.errors?.[0]?.message || 'Sign in failed');
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleSignUp() {
+    if (!signUpLoaded || !email.trim() || !password.trim()) return;
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await signUp.create({
+        emailAddress: email.trim(),
+        password: password.trim(),
+      });
+
+      // Send verification code
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+      setPendingVerification(true);
+      setError('');
+    } catch (err: any) {
+      console.error('Sign up error:', err);
+      setError(err.errors?.[0]?.message || 'Sign up failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerifyCode() {
+    if (!signUpLoaded || !code.trim()) return;
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const result = await signUp.attemptEmailAddressVerification({
+        code: code.trim(),
+      });
+
+      if (result.status === 'complete') {
+        await setSignUpActive({ session: result.createdSessionId });
+        router.back();
+      } else {
+        setError('Verification incomplete. Please try again.');
+      }
+    } catch (err: any) {
+      console.error('Verification error:', err);
+      setError(err.errors?.[0]?.message || 'Invalid code');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Verification code entry screen
+  if (pendingVerification) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Verify Email</Text>
+        <Text style={styles.subtitle}>
+          Enter the verification code sent to {email}
+        </Text>
+        <Text style={styles.hint}>
+          For test emails (+clerk_test), use code: 424242
+        </Text>
+
+        <Text style={styles.label}>Verification Code</Text>
+        <TextInput
+          style={styles.input}
+          value={code}
+          onChangeText={setCode}
+          placeholder="Enter code"
+          placeholderTextColor="#6b7280"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="number-pad"
+        />
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        <TouchableOpacity
+          style={[styles.button, loading && styles.buttonDisabled]}
+          onPress={handleVerifyCode}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Verify</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.switchMode}
+          onPress={() => {
+            setPendingVerification(false);
+            setCode('');
+            setError('');
+          }}
+        >
+          <Text style={styles.switchModeText}>Back to Sign Up</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const handleSubmit = mode === 'signin' ? handleSignIn : handleSignUp;
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Connect to Snowfort</Text>
+      <Text style={styles.title}>
+        {mode === 'signin' ? 'Welcome Back' : 'Create Account'}
+      </Text>
 
-      <Text style={styles.label}>Token</Text>
+      <Text style={styles.label}>Email</Text>
       <TextInput
         style={styles.input}
-        value={token}
-        onChangeText={setTokenInput}
-        placeholder="Your authentication token"
+        value={email}
+        onChangeText={setEmail}
+        placeholder="your@email.com"
         placeholderTextColor="#6b7280"
         autoCapitalize="none"
         autoCorrect={false}
+        keyboardType="email-address"
       />
 
-      <Text style={styles.hint}>
-        Use test-token-123 for development, or run "snowfort auth" to get a real token
-      </Text>
+      <Text style={styles.label}>Password</Text>
+      <TextInput
+        style={styles.input}
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Your password"
+        placeholderTextColor="#6b7280"
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry
+      />
+
+      {error ? <Text style={styles.error}>{error}</Text> : null}
 
       <TouchableOpacity
         style={[styles.button, loading && styles.buttonDisabled]}
-        onPress={handleConnect}
+        onPress={handleSubmit}
         disabled={loading}
       >
         {loading ? (
           <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={styles.buttonText}>Connect</Text>
+          <Text style={styles.buttonText}>
+            {mode === 'signin' ? 'Sign In' : 'Sign Up'}
+          </Text>
         )}
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.switchMode}
+        onPress={() => {
+          setMode(mode === 'signin' ? 'signup' : 'signin');
+          setError('');
+        }}
+      >
+        <Text style={styles.switchModeText}>
+          {mode === 'signin'
+            ? "Don't have an account? Sign Up"
+            : 'Already have an account? Sign In'}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -81,10 +216,22 @@ const styles = StyleSheet.create({
   },
   title: {
     color: '#fff',
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 32,
+    marginBottom: 8,
     textAlign: 'center',
+  },
+  subtitle: {
+    color: '#9ca3af',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  hint: {
+    color: '#6366f1',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 24,
   },
   label: {
     color: '#9ca3af',
@@ -101,10 +248,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
   },
-  hint: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginTop: 8,
+  error: {
+    color: '#ef4444',
+    fontSize: 14,
+    marginTop: 16,
+    textAlign: 'center',
   },
   button: {
     backgroundColor: '#6366f1',
@@ -120,5 +268,13 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  switchMode: {
+    marginTop: 24,
+    alignItems: 'center',
+  },
+  switchModeText: {
+    color: '#6366f1',
+    fontSize: 14,
   },
 });
