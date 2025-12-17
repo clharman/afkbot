@@ -1,6 +1,7 @@
-import { authService } from './auth';
+import { authService, isDevToken } from './auth';
 import { connectionRegistry, type ClientData, type ClientType } from './connections';
 import { pushService } from './push';
+import * as db from './db';
 import type {
   DaemonMessage,
   RelayToDaemonMessage,
@@ -10,19 +11,27 @@ import type {
 
 const PORT = parseInt(process.env.RELAY_PORT || '8080');
 
-function handleDaemonMessage(
+async function handleDaemonMessage(
   ws: Bun.ServerWebSocket<ClientData>,
   message: DaemonMessage
-): void {
+): Promise<void> {
   switch (message.type) {
     case 'auth': {
-      const userId = authService.validateToken(message.token);
-      if (!userId) {
-        ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid token' }));
+      // Support dev token for testing
+      if (isDevToken(message.token)) {
+        connectionRegistry.registerConnection(ws, 'dev-user', 'daemon');
+        ws.send(JSON.stringify({ type: 'auth_ok' }));
+        return;
+      }
+
+      const result = await authService.authenticateDaemon(message.token);
+      if (!result.success) {
+        ws.send(JSON.stringify({ type: 'auth_error', message: result.error }));
         ws.close();
         return;
       }
-      connectionRegistry.registerConnection(ws, userId, 'daemon');
+      connectionRegistry.registerConnection(ws, result.userId!, 'daemon');
+      ws.data.deviceId = result.deviceId;
       ws.send(JSON.stringify({ type: 'auth_ok' }));
       break;
     }
@@ -82,19 +91,26 @@ function handleDaemonMessage(
   }
 }
 
-function handleMobileMessage(
+async function handleMobileMessage(
   ws: Bun.ServerWebSocket<ClientData>,
   message: MobileMessage
-): void {
+): Promise<void> {
   switch (message.type) {
     case 'auth': {
-      const userId = authService.validateToken(message.token);
-      if (!userId) {
-        ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid token' }));
+      // Support dev token for testing
+      if (isDevToken(message.token)) {
+        connectionRegistry.registerConnection(ws, 'dev-user', 'mobile');
+        ws.send(JSON.stringify({ type: 'auth_ok' }));
+        return;
+      }
+
+      const result = await authService.authenticateMobile(message.token);
+      if (!result.success) {
+        ws.send(JSON.stringify({ type: 'auth_error', message: result.error }));
         ws.close();
         return;
       }
-      connectionRegistry.registerConnection(ws, userId, 'mobile');
+      connectionRegistry.registerConnection(ws, result.userId!, 'mobile');
       ws.send(JSON.stringify({ type: 'auth_ok' }));
       break;
     }
@@ -166,7 +182,7 @@ function handleMobileMessage(
 const server = Bun.serve<ClientData>({
   port: PORT,
 
-  fetch(req, server) {
+  async fetch(req, server) {
     const url = new URL(req.url);
 
     // Health check endpoint
@@ -178,6 +194,56 @@ const server = Bun.serve<ClientData>({
       }), {
         headers: { 'Content-Type': 'application/json' },
       });
+    }
+
+    // Device registration API
+    if (url.pathname === '/api/devices' && req.method === 'POST') {
+      try {
+        const authHeader = req.headers.get('Authorization');
+        if (!authHeader?.startsWith('Bearer ')) {
+          return new Response(JSON.stringify({ error: 'Missing authorization' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        const token = authHeader.slice(7);
+
+        // Verify Clerk token
+        const result = await authService.authenticateMobile(token);
+        if (!result.success) {
+          return new Response(JSON.stringify({ error: result.error }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Get device name from body
+        const body = await req.json() as { name: string };
+        const deviceName = body.name || 'Unknown Device';
+
+        // Create device in database
+        const device = await db.createDevice(result.userId!, deviceName);
+        if (!device) {
+          return new Response(JSON.stringify({ error: 'Failed to create device' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        return new Response(JSON.stringify({
+          deviceToken: device.device_token,
+          deviceId: device.id,
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } catch (err) {
+        console.error('[Relay] Device registration error:', err);
+        return new Response(JSON.stringify({ error: 'Internal error' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // WebSocket upgrade

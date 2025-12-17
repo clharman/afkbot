@@ -2,6 +2,7 @@
 
 import { run } from './run';
 import { setup } from './setup';
+import { auth, logout, getDeviceToken } from './auth';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -25,6 +26,18 @@ async function main() {
       break;
     }
 
+    case 'auth': {
+      if (args[1] === '--logout' || args[1] === 'logout') {
+        await logout();
+      } else if (args[1] === '--reset' || args[1] === 'reset') {
+        await logout();
+        await auth();
+      } else {
+        await auth();
+      }
+      break;
+    }
+
     case 'setup': {
       await setup();
       break;
@@ -37,6 +50,18 @@ async function main() {
       break;
     }
 
+    case 'status': {
+      const token = await getDeviceToken();
+      if (token) {
+        console.log('✓ Authenticated');
+        console.log(`  Device token: ${token.slice(0, 12)}...`);
+      } else {
+        console.log('✗ Not authenticated');
+        console.log('  Run "snowfort auth" to sign in.');
+      }
+      break;
+    }
+
     case 'help':
     case '--help':
     case '-h':
@@ -45,12 +70,17 @@ async function main() {
 Snowfort - Remote access to local Claude Code sessions
 
 Commands:
+  auth               Authenticate with Snowfort
+  auth --logout      Sign out
+  auth --reset       Re-authenticate
+  status             Show authentication status
   run -- <command>   Start a session with AgentAPI wrapper
   setup              Configure shell integration
   daemon             Run the background daemon
   help               Show this help message
 
 Examples:
+  snowfort auth
   snowfort run -- claude
   snowfort setup
 `);

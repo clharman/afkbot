@@ -7,9 +7,9 @@ class RelayConnection {
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    // Default to localhost for development
-    // In production, this would be your relay server URL
-    this.url = 'ws://localhost:8080/ws/mobile';
+    // Use environment variable or default to localhost
+    const baseUrl = process.env.EXPO_PUBLIC_RELAY_URL || 'ws://localhost:8080';
+    this.url = `${baseUrl}/ws/mobile`;
   }
 
   setUrl(url: string) {

@@ -1,5 +1,6 @@
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useAuth, useUser } from '@clerk/clerk-expo';
 import { useStore } from '@/lib/store';
 import { relay } from '@/lib/relay';
 import { useState, useCallback } from 'react';
@@ -31,7 +32,9 @@ function SessionCard({ session, onPress }: { session: Session; onPress: () => vo
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { sessions, isConnected, isAuthenticated } = useStore();
+  const { isSignedIn, signOut } = useAuth();
+  const { user } = useUser();
+  const { sessions, isConnected } = useStore();
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = useCallback(() => {
@@ -40,7 +43,7 @@ export default function HomeScreen() {
     setTimeout(() => setRefreshing(false), 1000);
   }, []);
 
-  if (!isAuthenticated) {
+  if (!isSignedIn) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyState}>
@@ -50,7 +53,7 @@ export default function HomeScreen() {
             style={styles.connectButton}
             onPress={() => router.push('/login')}
           >
-            <Text style={styles.connectButtonText}>Connect</Text>
+            <Text style={styles.connectButtonText}>Sign In</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -60,10 +63,15 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <View style={[styles.connectionDot, { backgroundColor: isConnected ? '#4ade80' : '#ef4444' }]} />
-        <Text style={styles.connectionText}>
-          {isConnected ? 'Connected' : 'Disconnected'}
-        </Text>
+        <View style={styles.headerLeft}>
+          <View style={[styles.connectionDot, { backgroundColor: isConnected ? '#4ade80' : '#ef4444' }]} />
+          <Text style={styles.connectionText}>
+            {isConnected ? 'Connected' : 'Disconnected'}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={() => signOut()}>
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </TouchableOpacity>
       </View>
 
       {sessions.length === 0 ? (
@@ -105,9 +113,14 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#2a2a4a',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   connectionDot: {
     width: 8,
@@ -117,6 +130,10 @@ const styles = StyleSheet.create({
   },
   connectionText: {
     color: '#9ca3af',
+    fontSize: 14,
+  },
+  signOutText: {
+    color: '#ef4444',
     fontSize: 14,
   },
   list: {

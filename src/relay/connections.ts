@@ -8,6 +8,7 @@ export interface ClientData {
   userId: string;
   authenticated: boolean;
   subscribedSessions: Set<string>;
+  deviceId?: string; // For daemon connections
 }
 
 export interface TrackedSession extends Session {

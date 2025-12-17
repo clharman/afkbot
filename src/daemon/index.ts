@@ -1,13 +1,32 @@
 import { sessionRegistry, type RegisteredSession } from './session-registry';
 import { AgentAPIClient } from './agentapi-client';
 import { RelayClient } from './relay-client';
+import { loadConfig } from '../cli/auth';
 
 const DAEMON_SOCKET = '/tmp/snowfort-daemon.sock';
 const HEALTH_CHECK_INTERVAL = 5000; // 5 seconds
 
-// Configuration (from environment or defaults)
-const RELAY_URL = process.env.SNOWFORT_RELAY_URL || 'ws://localhost:8080';
-const RELAY_TOKEN = process.env.SNOWFORT_TOKEN || 'test-token-123';
+// Configuration will be loaded from config file or environment
+let RELAY_URL = process.env.SNOWFORT_RELAY_URL || 'ws://localhost:8080';
+let RELAY_TOKEN = process.env.SNOWFORT_TOKEN || '';
+
+async function loadDaemonConfig(): Promise<void> {
+  const config = await loadConfig();
+
+  if (config.deviceToken) {
+    RELAY_TOKEN = config.deviceToken;
+  }
+
+  if (config.relayUrl) {
+    RELAY_URL = config.relayUrl;
+  }
+
+  // Fall back to dev token if nothing configured
+  if (!RELAY_TOKEN) {
+    console.log('[Daemon] No device token found, using dev mode');
+    RELAY_TOKEN = 'test-token-123';
+  }
+}
 
 // Map of session ID to AgentAPI client
 const clients = new Map<string, AgentAPIClient>();
@@ -47,10 +66,11 @@ async function handleSessionStart(data: {
     console.log(`[Daemon] Session ${data.id.slice(0, 8)} event:`, event.type);
 
     if (relayClient?.isConnected()) {
-      if (event.type === 'message') {
-        const msg = event.data as { content?: string; role?: string };
-        if (msg.content) {
-          relayClient.sendSessionOutput(data.id, msg.content);
+      if (event.type === 'message_update') {
+        const msg = event.data as { message?: string; role?: string };
+        // Only forward agent messages, not user messages (they already have those)
+        if (msg.message && msg.role === 'agent') {
+          relayClient.sendSessionOutput(data.id, msg.message);
         }
       }
     }
@@ -183,6 +203,9 @@ async function connectToRelay(): Promise<void> {
 
 export async function startDaemon(): Promise<void> {
   console.log('[Daemon] Starting Snowfort daemon...');
+
+  // Load configuration from file or environment
+  await loadDaemonConfig();
 
   await startUnixSocketServer();
 
