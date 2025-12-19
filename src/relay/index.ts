@@ -46,10 +46,11 @@ function cleanupExpiredCodes() {
 function getClerkFrontendApi(): string {
   if (!CLERK_PUBLISHABLE_KEY) return '';
   try {
-    // Key format: pk_test_<base64>$ or pk_live_<base64>$
+    // Key format: pk_test_<base64> or pk_live_<base64>
     const base64Part = CLERK_PUBLISHABLE_KEY.split('_')[2];
-    const decoded = atob(base64Part.replace(/\$$/, ''));
-    return decoded;
+    const decoded = atob(base64Part);
+    // Remove trailing $ if present
+    return decoded.replace(/\$$/, '');
   } catch {
     return '';
   }
