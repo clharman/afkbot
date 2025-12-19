@@ -42,6 +42,19 @@ function cleanupExpiredCodes() {
   }
 }
 
+// Extract Clerk frontend API URL from publishable key
+function getClerkFrontendApi(): string {
+  if (!CLERK_PUBLISHABLE_KEY) return '';
+  try {
+    // Key format: pk_test_<base64>$ or pk_live_<base64>$
+    const base64Part = CLERK_PUBLISHABLE_KEY.split('_')[2];
+    const decoded = atob(base64Part.replace(/\$$/, ''));
+    return decoded;
+  } catch {
+    return '';
+  }
+}
+
 async function handleDaemonMessage(
   ws: Bun.ServerWebSocket<ClientData>,
   message: DaemonMessage
@@ -455,7 +468,13 @@ function deviceAuthPage(code: string): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Snowfort - Link Device</title>
-  <script src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"></script>
+  <script
+    async
+    crossorigin="anonymous"
+    data-clerk-publishable-key="${CLERK_PUBLISHABLE_KEY}"
+    src="https://${getClerkFrontendApi()}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+    type="text/javascript"
+  ></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -565,7 +584,6 @@ function deviceAuthPage(code: string): string {
   </div>
 
   <script>
-    const publishableKey = '${CLERK_PUBLISHABLE_KEY}';
     let deviceCode = '${code}';
     const statusEl = document.getElementById('status');
     const codeInput = document.getElementById('code-input');
@@ -619,14 +637,23 @@ function deviceAuthPage(code: string): string {
       }
     }
 
-    // Initialize Clerk
-    async function initClerk() {
-      if (!publishableKey) {
-        showStatus('Authentication not configured', 'error');
+    // Wait for Clerk to load (it auto-initializes from script data attribute)
+    window.addEventListener('load', async () => {
+      // Wait a moment for Clerk to initialize
+      let attempts = 0;
+      while (!window.Clerk && attempts < 50) {
+        await new Promise(r => setTimeout(r, 100));
+        attempts++;
+      }
+
+      if (!window.Clerk) {
+        showStatus('Failed to load authentication', 'error');
         return;
       }
 
-      const clerk = new window.Clerk(publishableKey);
+      const clerk = window.Clerk;
+
+      // Wait for Clerk to be ready
       await clerk.load();
 
       if (clerk.user) {
@@ -648,9 +675,7 @@ function deviceAuthPage(code: string): string {
           }
         });
       }
-    }
-
-    initClerk();
+    });
   </script>
 </body>
 </html>`;
