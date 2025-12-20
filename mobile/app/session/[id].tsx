@@ -92,14 +92,16 @@ export default function SessionScreen() {
   // Custom rules to wrap tables in horizontal scroll
   const markdownRules = {
     table: (node: any, children: any, parent: any, styles: any) => (
-      <ScrollView
-        key={node.key}
-        horizontal
-        showsHorizontalScrollIndicator={true}
-        style={{ marginVertical: 8 }}
-      >
-        <View style={styles.table}>{children}</View>
-      </ScrollView>
+      <View key={node.key} style={{ marginVertical: 8 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={true}
+          contentContainerStyle={{ flexGrow: 0 }}
+          style={{ flexGrow: 0 }}
+        >
+          <View style={styles.table}>{children}</View>
+        </ScrollView>
+      </View>
     ),
   };
 
