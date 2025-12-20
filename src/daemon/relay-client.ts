@@ -1,16 +1,19 @@
 import type { DaemonMessage, RelayToDaemonMessage } from '../types';
 
 type MessageHandler = (message: RelayToDaemonMessage) => void;
+type ReconnectHandler = () => void;
 
 export class RelayClient {
   private ws: WebSocket | null = null;
   private url: string;
   private token: string;
   private onMessage: MessageHandler | null = null;
+  private onReconnect: ReconnectHandler | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
   private connected = false;
+  private isReconnecting = false;
 
   constructor(url: string, token: string) {
     this.url = url;
@@ -37,6 +40,12 @@ export class RelayClient {
             if (message.type === 'auth_ok') {
               console.log('[RelayClient] Authenticated');
               this.connected = true;
+              // Call reconnect handler to re-register sessions
+              if (this.isReconnecting && this.onReconnect) {
+                console.log('[RelayClient] Re-registering sessions after reconnect');
+                this.onReconnect();
+              }
+              this.isReconnecting = false;
               resolve();
             } else if (message.type === 'auth_error') {
               console.error('[RelayClient] Auth failed:', message.message);
@@ -78,6 +87,7 @@ export class RelayClient {
     console.log(`[RelayClient] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 
     setTimeout(() => {
+      this.isReconnecting = true;
       this.connect().catch((err) => {
         console.error('[RelayClient] Reconnect failed:', err.message);
       });
@@ -86,6 +96,10 @@ export class RelayClient {
 
   setMessageHandler(handler: MessageHandler): void {
     this.onMessage = handler;
+  }
+
+  setReconnectHandler(handler: ReconnectHandler): void {
+    this.onReconnect = handler;
   }
 
   send(message: DaemonMessage): void {

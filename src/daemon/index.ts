@@ -470,11 +470,21 @@ async function startUnixSocketServer(): Promise<void> {
   console.log(`[Daemon] Unix socket server listening on ${DAEMON_SOCKET}`);
 }
 
+function reRegisterSessions(): void {
+  // Re-register all active sessions with the relay after reconnecting
+  for (const [sessionId, session] of sessions) {
+    console.log(`[Daemon] Re-registering session ${sessionId}`);
+    relayClient?.sendSessionStart(sessionId, session.name, session.cwd);
+    relayClient?.sendSessionStatus(sessionId, session.status);
+  }
+}
+
 async function connectToRelay(): Promise<void> {
   console.log(`[Daemon] Connecting to relay at ${RELAY_URL}...`);
 
   relayClient = new RelayClient(RELAY_URL, RELAY_TOKEN);
   relayClient.setMessageHandler(handleRelayMessage);
+  relayClient.setReconnectHandler(reRegisterSessions);
 
   try {
     await relayClient.connect();
