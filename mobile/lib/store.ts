@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, RelayMessage } from './types';
+import type { Session, ChatMessage } from './types';
 
 interface AppState {
   // Auth
@@ -20,10 +20,10 @@ interface AppState {
   currentSessionId: string | null;
   setCurrentSession: (sessionId: string | null) => void;
 
-  // Session output
-  sessionOutputs: Map<string, string[]>;
-  appendOutput: (sessionId: string, output: string) => void;
-  clearOutput: (sessionId: string) => void;
+  // Session messages (chat format)
+  sessionMessages: Map<string, ChatMessage[]>;
+  appendMessage: (sessionId: string, role: 'user' | 'assistant', content: string) => void;
+  clearMessages: (sessionId: string) => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -50,19 +50,19 @@ export const useStore = create<AppState>((set, get) => ({
   currentSessionId: null,
   setCurrentSession: (sessionId) => set({ currentSessionId: sessionId }),
 
-  // Session output
-  sessionOutputs: new Map(),
-  appendOutput: (sessionId, output) =>
+  // Session messages
+  sessionMessages: new Map(),
+  appendMessage: (sessionId, role, content) =>
     set((state) => {
-      const outputs = new Map(state.sessionOutputs);
-      const existing = outputs.get(sessionId) || [];
-      outputs.set(sessionId, [...existing, output]);
-      return { sessionOutputs: outputs };
+      const messages = new Map(state.sessionMessages);
+      const existing = messages.get(sessionId) || [];
+      messages.set(sessionId, [...existing, { role, content }]);
+      return { sessionMessages: messages };
     }),
-  clearOutput: (sessionId) =>
+  clearMessages: (sessionId) =>
     set((state) => {
-      const outputs = new Map(state.sessionOutputs);
-      outputs.delete(sessionId);
-      return { sessionOutputs: outputs };
+      const messages = new Map(state.sessionMessages);
+      messages.delete(sessionId);
+      return { sessionMessages: messages };
     }),
 }));

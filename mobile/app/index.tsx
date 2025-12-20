@@ -1,5 +1,6 @@
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useClerk } from '@clerk/clerk-expo';
 import { useStore } from '@/lib/store';
 import { relay } from '@/lib/relay';
 import { useState, useCallback } from 'react';
@@ -31,6 +32,7 @@ function SessionCard({ session, onPress }: { session: Session; onPress: () => vo
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { signOut } = useClerk();
   const { sessions, isConnected, isAuthenticated, setToken } = useStore();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -40,9 +42,10 @@ export default function HomeScreen() {
     setTimeout(() => setRefreshing(false), 1000);
   }, []);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     relay.disconnect();
     setToken(null);
+    await signOut();
   };
 
   if (!isAuthenticated) {

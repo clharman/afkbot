@@ -1,26 +1,27 @@
 import {
   View,
   Text,
-  ScrollView,
   TextInput,
   TouchableOpacity,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  FlatList,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { useStore } from '@/lib/store';
 import { relay } from '@/lib/relay';
 import { useEffect, useRef, useState } from 'react';
+import type { ChatMessage } from '@/lib/types';
 
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { sessions, sessionOutputs, setCurrentSession } = useStore();
+  const { sessions, sessionMessages, setCurrentSession } = useStore();
   const [input, setInput] = useState('');
-  const scrollViewRef = useRef<ScrollView>(null);
+  const flatListRef = useRef<FlatList>(null);
 
   const session = sessions.find((s) => s.id === id);
-  const outputs = sessionOutputs.get(id || '') || [];
+  const messages = sessionMessages.get(id || '') || [];
 
   useEffect(() => {
     if (id) {
@@ -34,10 +35,14 @@ export default function SessionScreen() {
     }
   }, [id]);
 
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    // Auto-scroll to bottom when new output arrives
-    scrollViewRef.current?.scrollToEnd({ animated: true });
-  }, [outputs]);
+    if (messages.length > 0) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [messages.length]);
 
   function handleSend() {
     if (!input.trim() || !id) return;
@@ -60,6 +65,16 @@ export default function SessionScreen() {
     ended: '#6b7280',
   };
 
+  const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
+    const isUser = item.role === 'user';
+    return (
+      <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
+        <Text style={styles.roleLabel}>{isUser ? 'You' : 'Claude'}</Text>
+        <Text style={styles.messageText}>{item.content}</Text>
+      </View>
+    );
+  };
+
   return (
     <>
       <Stack.Screen
@@ -79,30 +94,33 @@ export default function SessionScreen() {
           <Text style={styles.pathText} numberOfLines={1}>
             {session.cwd}
           </Text>
+          <View style={styles.statusBadge}>
+            <View style={[styles.statusIndicator, { backgroundColor: statusColors[session.status] }]} />
+            <Text style={styles.statusText}>{session.status}</Text>
+          </View>
         </View>
 
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.outputContainer}
-          contentContainerStyle={styles.outputContent}
-        >
-          {outputs.length === 0 ? (
-            <Text style={styles.emptyText}>Waiting for output...</Text>
-          ) : (
-            outputs.map((output, index) => (
-              <Text key={index} style={styles.outputText}>
-                {output}
-              </Text>
-            ))
-          )}
-        </ScrollView>
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={(_, index) => index.toString()}
+          style={styles.messageList}
+          contentContainerStyle={styles.messageListContent}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>Waiting for messages...</Text>
+              <Text style={styles.emptySubtext}>Messages will appear here as the conversation progresses</Text>
+            </View>
+          }
+        />
 
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
             value={input}
             onChangeText={setInput}
-            placeholder="Type a message..."
+            placeholder="Send a message..."
             placeholderTextColor="#6b7280"
             multiline
             maxLength={10000}
@@ -131,11 +149,34 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a1a2e',
     borderBottomWidth: 1,
     borderBottomColor: '#2a2a4a',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   pathText: {
     color: '#6b7280',
     fontSize: 12,
     fontFamily: 'monospace',
+    flex: 1,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0f0f1a',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  statusText: {
+    color: '#9ca3af',
+    fontSize: 12,
+    textTransform: 'capitalize',
   },
   statusDot: {
     width: 10,
@@ -143,24 +184,56 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginRight: 8,
   },
-  outputContainer: {
+  messageList: {
     flex: 1,
   },
-  outputContent: {
+  messageListContent: {
     padding: 16,
+    paddingBottom: 8,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 60,
   },
   emptyText: {
     color: '#6b7280',
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    color: '#4b5563',
     fontSize: 14,
     textAlign: 'center',
-    marginTop: 32,
+    paddingHorizontal: 32,
   },
-  outputText: {
+  messageBubble: {
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 12,
+    maxWidth: '90%',
+  },
+  userBubble: {
+    backgroundColor: '#6366f1',
+    alignSelf: 'flex-end',
+  },
+  assistantBubble: {
+    backgroundColor: '#1a1a2e',
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#2a2a4a',
+  },
+  roleLabel: {
+    color: '#9ca3af',
+    fontSize: 11,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  messageText: {
     color: '#e5e7eb',
-    fontSize: 14,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    lineHeight: 20,
-    marginBottom: 8,
+    fontSize: 15,
+    lineHeight: 22,
   },
   inputContainer: {
     flexDirection: 'row',

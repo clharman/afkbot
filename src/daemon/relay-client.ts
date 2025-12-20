@@ -102,6 +102,10 @@ export class RelayClient {
     this.send({ type: 'session_output', sessionId, data });
   }
 
+  sendMessage(sessionId: string, role: 'user' | 'assistant', content: string): void {
+    this.send({ type: 'session_message', sessionId, role, content });
+  }
+
   sendSessionStatus(sessionId: string, status: 'running' | 'idle'): void {
     this.send({ type: 'session_status', sessionId, status });
   }

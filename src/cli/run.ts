@@ -1,149 +1,132 @@
-import { spawn } from 'bun';
 import { randomUUID } from 'crypto';
+import { spawn as spawnPty } from '@zenyr/bun-pty';
+import type { Socket } from 'bun';
 import { homedir } from 'os';
-import { join } from 'path';
 
-const BASE_PORT = 3284;
 const DAEMON_SOCKET = '/tmp/snowfort-daemon.sock';
 
-async function findAgentAPI(): Promise<string> {
-  // Check common locations
-  const candidates = [
-    'agentapi', // In PATH
-    join(homedir(), 'go', 'bin', 'agentapi'),
-    '/usr/local/bin/agentapi',
-    '/opt/homebrew/bin/agentapi',
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      const result = await Bun.$`which ${candidate}`.quiet();
-      if (result.exitCode === 0) {
-        return candidate;
-      }
-    } catch {}
-
-    // Also check if file exists directly
-    const file = Bun.file(candidate);
-    if (await file.exists()) {
-      return candidate;
-    }
-  }
-
-  throw new Error(
-    'AgentAPI not found. Install with: go install github.com/coder/agentapi@latest'
-  );
+// Get Claude's project directory for the current working directory
+function getClaudeProjectDir(cwd: string): string {
+  // Claude encodes paths by replacing / with -
+  const encodedPath = cwd.replace(/\//g, '-');
+  return `${homedir()}/.claude/projects/${encodedPath}`;
 }
 
-interface SessionInfo {
-  id: string;
-  port: number;
-  cwd: string;
-  command: string[];
-}
-
-async function findAvailablePort(startPort: number): Promise<number> {
-  let port = startPort;
-  while (port < startPort + 100) {
-    try {
-      // Try to connect to see if something is listening
-      const response = await fetch(`http://localhost:${port}/`, {
-        signal: AbortSignal.timeout(100)
-      });
-      // Port is in use, try next
-      port++;
-    } catch {
-      // Port is likely free (connection refused)
-      return port;
-    }
-  }
-  throw new Error('No available port found');
-}
-
-async function notifyDaemon(session: SessionInfo): Promise<void> {
+// Connect to daemon and maintain bidirectional communication
+async function connectToDaemon(
+  sessionId: string,
+  projectDir: string,
+  cwd: string,
+  command: string[],
+  onInput: (text: string) => void
+): Promise<{ close: () => void } | null> {
   try {
-    // Try to connect to daemon via Unix socket
+    let messageBuffer = '';
+
     const socket = await Bun.connect({
       unix: DAEMON_SOCKET,
       socket: {
-        data(socket, data) {},
-        error(socket, error) {},
+        data(socket, data) {
+          messageBuffer += data.toString();
+
+          const lines = messageBuffer.split('\n');
+          messageBuffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const msg = JSON.parse(line);
+              if (msg.type === 'input' && msg.text) {
+                onInput(msg.text);
+              }
+            } catch {}
+          }
+        },
+        error(socket, error) {
+          console.error('[Session] Daemon connection error:', error);
+        },
         close(socket) {},
       },
     });
-    socket.write(JSON.stringify({ type: 'session_start', ...session }));
-    socket.end();
+
+    // Tell daemon about this session
+    socket.write(JSON.stringify({
+      type: 'session_start',
+      id: sessionId,
+      projectDir,
+      cwd,
+      command,
+      name: command.join(' '),
+    }) + '\n');
+
+    return {
+      close: () => {
+        socket.write(JSON.stringify({ type: 'session_end', sessionId }) + '\n');
+        socket.end();
+      },
+    };
   } catch {
-    // Daemon not running, that's okay for now
+    return null;
   }
 }
 
 export async function run(command: string[]): Promise<void> {
-  const sessionId = randomUUID();
-  const port = await findAvailablePort(BASE_PORT);
+  const sessionId = randomUUID().slice(0, 8);
   const cwd = process.cwd();
-  const agentapiPath = await findAgentAPI();
+  const projectDir = getClaudeProjectDir(cwd);
 
-  console.log(`Starting session ${sessionId.slice(0, 8)}... on port ${port}`);
+  const cols = process.stdout.columns || 80;
+  const rows = process.stdout.rows || 24;
 
-  // Start AgentAPI with the command
-  const agentapiArgs = [
-    'server',
-    '--port', port.toString(),
-    '--',
-    ...command,
-  ];
-
-  const agentapi = spawn({
-    cmd: [agentapiPath, ...agentapiArgs],
+  // Create PTY with the command - preserves all terminal features
+  const pty = spawnPty(command[0], command.slice(1), {
+    name: process.env.TERM || 'xterm-256color',
+    cols,
+    rows,
     cwd,
-    stdio: ['inherit', 'inherit', 'inherit'],
+    env: process.env as Record<string, string>,
   });
 
-  // Give it a moment to start
-  await Bun.sleep(500);
-
-  // Check if process is still running
-  if (agentapi.exitCode !== null) {
-    throw new Error(`AgentAPI exited immediately with code ${agentapi.exitCode}`);
-  }
-
-  // Wait for AgentAPI to be ready
-  await waitForAgentAPI(port);
-
-  // Notify daemon about new session
-  await notifyDaemon({ id: sessionId, port, cwd, command });
-
-  console.log(`Session ready. Attaching to terminal...`);
-  console.log(`(AgentAPI available at http://localhost:${port})`);
-  console.log('');
-
-  // Attach to the terminal session
-  const attach = spawn({
-    cmd: [agentapiPath, 'attach', '--url', `localhost:${port}`],
+  // Connect to daemon for remote sync
+  const daemon = await connectToDaemon(
+    sessionId,
+    projectDir,
     cwd,
-    stdio: ['inherit', 'inherit', 'inherit'],
-  });
-
-  // Wait for attach to complete (user exits or session ends)
-  await attach.exited;
-
-  // Clean up
-  agentapi.kill();
-  console.log('\nSession ended.');
-}
-
-async function waitForAgentAPI(port: number, maxAttempts = 50): Promise<void> {
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const response = await fetch(`http://localhost:${port}/status`);
-      if (response.ok) {
-        return;
-      }
-    } catch (err) {
-      // Not ready yet
+    command,
+    (text) => {
+      // Remote input from mobile - write to PTY
+      pty.write(text);
     }
-    await Bun.sleep(200);
+  );
+
+  // Put stdin in raw mode for proper terminal handling
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
   }
-  throw new Error('AgentAPI failed to start');
+
+  // Forward PTY output to stdout (colors preserved)
+  pty.onData((data: string) => {
+    process.stdout.write(data);
+  });
+
+  // Forward stdin to PTY
+  process.stdin.on('data', (data: Buffer) => {
+    pty.write(data.toString());
+  });
+
+  // Handle terminal resize
+  process.stdout.on('resize', () => {
+    pty.resize(process.stdout.columns || 80, process.stdout.rows || 24);
+  });
+
+  // Wait for PTY to exit
+  await new Promise<void>((resolve) => {
+    pty.onExit(({ exitCode, signal }) => {
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      daemon?.close();
+      resolve();
+    });
+  });
 }

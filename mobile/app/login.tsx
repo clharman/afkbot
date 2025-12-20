@@ -1,12 +1,26 @@
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { useSignIn, useSignUp } from '@clerk/clerk-expo';
+import { useState, useCallback, useEffect } from 'react';
+import { useSignIn, useSignUp, useOAuth, useAuth } from '@clerk/clerk-expo';
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
+
+// Required for OAuth to work properly on native
+WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { isSignedIn } = useAuth();
   const { signIn, setActive: setSignInActive, isLoaded: signInLoaded } = useSignIn();
   const { signUp, setActive: setSignUpActive, isLoaded: signUpLoaded } = useSignUp();
+  const { startOAuthFlow } = useOAuth({ strategy: 'oauth_google' });
+
+  // If already signed in, go to home
+  useEffect(() => {
+    if (isSignedIn) {
+      router.replace('/');
+    }
+  }, [isSignedIn, router]);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -15,6 +29,27 @@ export default function LoginScreen() {
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [pendingVerification, setPendingVerification] = useState(false);
+
+  const handleGoogleSignIn = useCallback(async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const { createdSessionId, setActive } = await startOAuthFlow({
+        redirectUrl: Linking.createURL('/'),
+      });
+
+      if (createdSessionId && setActive) {
+        await setActive({ session: createdSessionId });
+        router.replace('/');
+      }
+    } catch (err: any) {
+      console.error('OAuth error:', err);
+      setError(err.errors?.[0]?.message || 'Google sign in failed');
+    } finally {
+      setLoading(false);
+    }
+  }, [startOAuthFlow, router]);
 
   async function handleSignIn() {
     if (!signInLoaded || !email.trim() || !password.trim()) return;
@@ -30,7 +65,7 @@ export default function LoginScreen() {
 
       if (result.status === 'complete') {
         await setSignInActive({ session: result.createdSessionId });
-        router.back();
+        router.replace('/');
       } else {
         setError('Sign in incomplete. Please try again.');
       }
@@ -79,7 +114,7 @@ export default function LoginScreen() {
 
       if (result.status === 'complete') {
         await setSignUpActive({ session: result.createdSessionId });
-        router.back();
+        router.replace('/');
       } else {
         setError('Verification incomplete. Please try again.');
       }
@@ -151,6 +186,25 @@ export default function LoginScreen() {
         {mode === 'signin' ? 'Welcome Back' : 'Create Account'}
       </Text>
 
+      {/* Google Sign In Button */}
+      <TouchableOpacity
+        style={[styles.googleButton, loading && styles.buttonDisabled]}
+        onPress={handleGoogleSignIn}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#000" />
+        ) : (
+          <Text style={styles.googleButtonText}>Continue with Google</Text>
+        )}
+      </TouchableOpacity>
+
+      <View style={styles.divider}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>or</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
       <Text style={styles.label}>Email</Text>
       <TextInput
         style={styles.input}
@@ -218,7 +272,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 8,
+    marginBottom: 24,
     textAlign: 'center',
   },
   subtitle: {
@@ -233,11 +287,39 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 24,
   },
+  googleButton: {
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  googleButtonText: {
+    color: '#000',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#2a2a4a',
+  },
+  dividerText: {
+    color: '#6b7280',
+    marginHorizontal: 16,
+    fontSize: 14,
+  },
   label: {
     color: '#9ca3af',
     fontSize: 14,
     marginBottom: 8,
-    marginTop: 16,
+    marginTop: 8,
   },
   input: {
     backgroundColor: '#1a1a2e',
@@ -259,7 +341,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 8,
     alignItems: 'center',
-    marginTop: 32,
+    marginTop: 24,
   },
   buttonDisabled: {
     opacity: 0.6,

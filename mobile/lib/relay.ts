@@ -75,7 +75,11 @@ class RelayConnection {
         break;
 
       case 'session_output':
-        store.appendOutput(message.sessionId, message.data);
+        // Legacy output (ignored now, we use session_message)
+        break;
+
+      case 'session_message':
+        store.appendMessage(message.sessionId, message.role, message.content);
         break;
 
       case 'session_status':

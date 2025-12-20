@@ -1,14 +1,40 @@
-import { sessionRegistry, type RegisteredSession } from './session-registry';
-import { AgentAPIClient } from './agentapi-client';
 import { RelayClient } from './relay-client';
 import { loadConfig } from '../cli/auth';
+import { watch, type FSWatcher } from 'fs';
+import { readFile, readdir } from 'fs/promises';
+import type { Socket } from 'bun';
 
 const DAEMON_SOCKET = '/tmp/snowfort-daemon.sock';
-const HEALTH_CHECK_INTERVAL = 5000; // 5 seconds
 
-// Configuration will be loaded from config file or environment
+// Configuration
 let RELAY_URL = process.env.SNOWFORT_RELAY_URL || 'ws://localhost:8080';
 let RELAY_TOKEN = process.env.SNOWFORT_TOKEN || '';
+
+interface ParsedMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+interface Session {
+  id: string;
+  name: string;
+  cwd: string;
+  projectDir: string;
+  command: string[];
+  socket: Socket<unknown>;
+  status: 'running' | 'idle';
+  watcher?: FSWatcher;
+  watchedFile?: string;
+  lastFileSize: number;
+  seenMessages: Set<string>; // Track message UUIDs to avoid duplicates
+}
+
+// Active sessions
+const sessions = new Map<string, Session>();
+
+// Relay client
+let relayClient: RelayClient | null = null;
 
 async function loadDaemonConfig(): Promise<void> {
   const config = await loadConfig();
@@ -16,181 +42,300 @@ async function loadDaemonConfig(): Promise<void> {
   if (config.deviceToken) {
     RELAY_TOKEN = config.deviceToken;
   }
-
   if (config.relayUrl) {
     RELAY_URL = config.relayUrl;
   }
 
-  // Fall back to dev token if nothing configured
   if (!RELAY_TOKEN) {
     console.log('[Daemon] No device token found, using dev mode');
-    RELAY_TOKEN = 'test-token-123';
+    RELAY_TOKEN = 'dev-token';
   }
 }
 
-// Map of session ID to AgentAPI client
-const clients = new Map<string, AgentAPIClient>();
+// Parse a JSONL line and extract message if it's a user or assistant message
+function parseJsonlLine(line: string): ParsedMessage | null {
+  try {
+    const data = JSON.parse(line);
 
-// Relay client (initialized in startDaemon)
-let relayClient: RelayClient | null = null;
+    // Skip non-message types
+    if (data.type !== 'user' && data.type !== 'assistant') {
+      return null;
+    }
 
-async function handleSessionStart(data: {
-  id: string;
-  port: number;
-  cwd: string;
-  command: string[];
-}): Promise<void> {
-  const session: RegisteredSession = {
-    id: data.id,
-    name: data.command.join(' '),
-    cwd: data.cwd,
-    port: data.port,
-    command: data.command,
-    status: 'running',
-    startedAt: new Date(),
-  };
+    // Skip meta/system messages
+    if (data.isMeta || data.subtype) {
+      return null;
+    }
 
-  sessionRegistry.register(session);
+    const message = data.message;
+    if (!message || !message.role) {
+      return null;
+    }
 
-  // Notify relay about new session
-  if (relayClient?.isConnected()) {
-    relayClient.sendSessionStart(data.id, session.name, session.cwd);
-  }
-
-  // Create AgentAPI client for this session
-  const client = new AgentAPIClient(data.port);
-  clients.set(data.id, client);
-
-  // Subscribe to events and forward to relay
-  client.subscribeToEvents((event) => {
-    console.log(`[Daemon] Session ${data.id.slice(0, 8)} event:`, event.type);
-
-    if (relayClient?.isConnected()) {
-      if (event.type === 'message_update') {
-        const msg = event.data as { message?: string; role?: string };
-        // Only forward agent messages, not user messages (they already have those)
-        if (msg.message && msg.role === 'agent') {
-          relayClient.sendSessionOutput(data.id, msg.message);
+    // Extract content
+    let content = '';
+    if (typeof message.content === 'string') {
+      content = message.content;
+    } else if (Array.isArray(message.content)) {
+      // Assistant messages have content as array
+      for (const block of message.content) {
+        if (block.type === 'text' && block.text) {
+          content += block.text;
         }
       }
     }
-  });
-}
 
-async function handleSessionEnd(sessionId: string): Promise<void> {
-  const client = clients.get(sessionId);
-  if (client) {
-    client.disconnect();
-    clients.delete(sessionId);
-  }
-  sessionRegistry.unregister(sessionId);
+    if (!content.trim()) {
+      return null;
+    }
 
-  // Notify relay
-  if (relayClient?.isConnected()) {
-    relayClient.sendSessionEnd(sessionId);
+    return {
+      role: message.role as 'user' | 'assistant',
+      content: content.trim(),
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
+  } catch {
+    return null;
   }
 }
 
-async function handleRelayMessage(message: { type: string; sessionId?: string; text?: string }): Promise<void> {
+// Find the most recently modified JSONL file in the project directory
+async function findLatestJsonlFile(projectDir: string): Promise<string | null> {
+  try {
+    const files = await readdir(projectDir);
+    const jsonlFiles = files.filter(f => f.endsWith('.jsonl'));
+
+    if (jsonlFiles.length === 0) return null;
+
+    // Get modification times
+    const fileStats = await Promise.all(
+      jsonlFiles.map(async (file) => {
+        const path = `${projectDir}/${file}`;
+        const stat = await Bun.file(path).stat();
+        return { path, mtime: stat?.mtime || 0 };
+      })
+    );
+
+    // Sort by mtime descending
+    fileStats.sort((a, b) => (b.mtime as number) - (a.mtime as number));
+
+    return fileStats[0]?.path || null;
+  } catch (err) {
+    console.error('[Daemon] Error finding JSONL file:', err);
+    return null;
+  }
+}
+
+// Read new content from JSONL file and parse messages
+async function processJsonlUpdates(session: Session): Promise<void> {
+  if (!session.watchedFile) return;
+
+  try {
+    const file = Bun.file(session.watchedFile);
+    const content = await file.text();
+    const lines = content.split('\n').filter(Boolean);
+
+    for (const line of lines) {
+      // Create a hash of the line to track if we've seen it
+      const lineHash = Bun.hash(line).toString();
+      if (session.seenMessages.has(lineHash)) {
+        continue;
+      }
+      session.seenMessages.add(lineHash);
+
+      const parsed = parseJsonlLine(line);
+      if (parsed && relayClient?.isConnected()) {
+        console.log(`[Daemon] New ${parsed.role} message for session ${session.id}`);
+        relayClient.sendMessage(session.id, parsed.role, parsed.content);
+
+        // Update status based on message type
+        const newStatus = parsed.role === 'assistant' ? 'idle' : 'running';
+        if (newStatus !== session.status) {
+          session.status = newStatus;
+          relayClient.sendSessionStatus(session.id, newStatus);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Daemon] Error processing JSONL:', err);
+  }
+}
+
+// Start watching the project directory for JSONL changes
+async function startWatching(session: Session): Promise<void> {
+  // Find the latest JSONL file
+  const jsonlFile = await findLatestJsonlFile(session.projectDir);
+
+  if (!jsonlFile) {
+    console.log(`[Daemon] No JSONL file found in ${session.projectDir}, will watch directory`);
+  } else {
+    session.watchedFile = jsonlFile;
+    console.log(`[Daemon] Watching ${jsonlFile}`);
+
+    // Initial read
+    await processJsonlUpdates(session);
+  }
+
+  // Watch the directory for changes
+  try {
+    session.watcher = watch(session.projectDir, { recursive: false }, async (eventType, filename) => {
+      if (!filename?.endsWith('.jsonl')) return;
+
+      const filePath = `${session.projectDir}/${filename}`;
+
+      // If we're not watching a file yet, or a newer file appeared, switch to it
+      if (!session.watchedFile || filePath !== session.watchedFile) {
+        const latestFile = await findLatestJsonlFile(session.projectDir);
+        if (latestFile && latestFile !== session.watchedFile) {
+          console.log(`[Daemon] Switching to watch ${latestFile}`);
+          session.watchedFile = latestFile;
+          session.seenMessages.clear();
+        }
+      }
+
+      // Process updates
+      await processJsonlUpdates(session);
+    });
+  } catch (err) {
+    console.error('[Daemon] Error setting up watcher:', err);
+  }
+
+  // Also poll periodically in case file watching misses updates
+  const pollInterval = setInterval(async () => {
+    if (!sessions.has(session.id)) {
+      clearInterval(pollInterval);
+      return;
+    }
+
+    // Check for new files
+    const latestFile = await findLatestJsonlFile(session.projectDir);
+    if (latestFile && latestFile !== session.watchedFile) {
+      console.log(`[Daemon] Poll found new file: ${latestFile}`);
+      session.watchedFile = latestFile;
+    }
+
+    if (session.watchedFile) {
+      await processJsonlUpdates(session);
+    }
+  }, 1000);
+}
+
+function stopWatching(session: Session): void {
+  if (session.watcher) {
+    session.watcher.close();
+  }
+}
+
+function handleSessionMessage(socket: Socket<unknown>, message: any): void {
+  switch (message.type) {
+    case 'session_start': {
+      const session: Session = {
+        id: message.id,
+        name: message.name || message.command?.join(' ') || 'Unknown',
+        cwd: message.cwd,
+        projectDir: message.projectDir,
+        command: message.command,
+        socket,
+        status: 'running',
+        lastFileSize: 0,
+        seenMessages: new Set(),
+      };
+      sessions.set(message.id, session);
+      console.log(`[Daemon] Session started: ${message.id} - ${session.name}`);
+      console.log(`[Daemon] Project dir: ${session.projectDir}`);
+
+      // Notify relay
+      if (relayClient?.isConnected()) {
+        relayClient.sendSessionStart(message.id, session.name, session.cwd);
+      }
+
+      // Start watching JSONL files
+      startWatching(session);
+      break;
+    }
+
+    case 'session_end': {
+      const session = sessions.get(message.sessionId);
+      if (session) {
+        console.log(`[Daemon] Session ended: ${message.sessionId}`);
+        stopWatching(session);
+        sessions.delete(message.sessionId);
+
+        if (relayClient?.isConnected()) {
+          relayClient.sendSessionEnd(message.sessionId);
+        }
+      }
+      break;
+    }
+  }
+}
+
+function handleRelayMessage(message: any): void {
   switch (message.type) {
     case 'send_input': {
-      if (!message.sessionId || !message.text) return;
-
-      const client = clients.get(message.sessionId);
-      if (client) {
-        console.log(`[Daemon] Forwarding input to session ${message.sessionId.slice(0, 8)}`);
-        try {
-          await client.sendMessage(message.text);
-        } catch (err) {
-          console.error('[Daemon] Failed to send message:', err);
-        }
+      // Forward input from mobile to the PTY
+      const session = sessions.get(message.sessionId);
+      if (session) {
+        console.log(`[Daemon] Forwarding input to session ${message.sessionId}`);
+        // Send to the PTY process - use \r (Enter key) to submit
+        session.socket.write(JSON.stringify({
+          type: 'input',
+          text: message.text + '\r',
+        }) + '\n');
       }
       break;
     }
-
-    case 'subscribe':
-    case 'unsubscribe':
-      // These are handled by the relay, daemon doesn't need to do anything
-      break;
   }
 }
 
 async function startUnixSocketServer(): Promise<void> {
-  // Clean up old socket
   try {
     await Bun.$`rm -f ${DAEMON_SOCKET}`.quiet();
   } catch {}
 
-  const server = Bun.listen({
+  Bun.listen({
     unix: DAEMON_SOCKET,
     socket: {
       data(socket, data) {
-        try {
-          const message = JSON.parse(data.toString());
+        const messages = data.toString().split('\n').filter(Boolean);
 
-          switch (message.type) {
-            case 'session_start':
-              handleSessionStart(message);
-              break;
-            case 'session_end':
-              handleSessionEnd(message.sessionId);
-              break;
-            case 'list_sessions':
-              socket.write(JSON.stringify(sessionRegistry.getAll()));
-              break;
+        for (const msg of messages) {
+          try {
+            const parsed = JSON.parse(msg);
+            handleSessionMessage(socket, parsed);
+          } catch (error) {
+            console.error('[Daemon] Error parsing message:', error);
           }
-        } catch (error) {
-          console.error('[Daemon] Error parsing message:', error);
         }
       },
       error(socket, error) {
         console.error('[Daemon] Socket error:', error);
       },
-      close(socket) {},
+      close(socket) {
+        for (const [id, session] of sessions) {
+          if (session.socket === socket) {
+            console.log(`[Daemon] Session disconnected: ${id}`);
+            stopWatching(session);
+            sessions.delete(id);
+
+            if (relayClient?.isConnected()) {
+              relayClient.sendSessionEnd(id);
+            }
+            break;
+          }
+        }
+      },
     },
   });
 
   console.log(`[Daemon] Unix socket server listening on ${DAEMON_SOCKET}`);
 }
 
-async function healthCheckLoop(): Promise<void> {
-  while (true) {
-    await Bun.sleep(HEALTH_CHECK_INTERVAL);
-
-    for (const [sessionId, client] of clients) {
-      const healthy = await client.isHealthy();
-      if (!healthy) {
-        console.log(`[Daemon] Session ${sessionId.slice(0, 8)} is no longer healthy`);
-        await handleSessionEnd(sessionId);
-      } else {
-        // Check if idle
-        try {
-          const status = await client.getStatus();
-          const newStatus = status.status === 'stable' ? 'idle' : 'running';
-          const oldStatus = sessionRegistry.get(sessionId)?.status;
-
-          if (oldStatus !== newStatus) {
-            sessionRegistry.updateStatus(sessionId, newStatus);
-
-            // Notify relay of status change
-            if (relayClient?.isConnected()) {
-              relayClient.sendSessionStatus(sessionId, newStatus);
-            }
-          }
-        } catch {}
-      }
-    }
-  }
-}
-
 async function connectToRelay(): Promise<void> {
   console.log(`[Daemon] Connecting to relay at ${RELAY_URL}...`);
 
   relayClient = new RelayClient(RELAY_URL, RELAY_TOKEN);
-
-  relayClient.setMessageHandler((message) => {
-    handleRelayMessage(message as any);
-  });
+  relayClient.setMessageHandler(handleRelayMessage);
 
   try {
     await relayClient.connect();
@@ -204,26 +349,17 @@ async function connectToRelay(): Promise<void> {
 export async function startDaemon(): Promise<void> {
   console.log('[Daemon] Starting Snowfort daemon...');
 
-  // Load configuration from file or environment
   await loadDaemonConfig();
-
   await startUnixSocketServer();
-
-  // Connect to relay server
   await connectToRelay();
 
-  // Start health check loop
-  healthCheckLoop();
-
   console.log('[Daemon] Ready.');
-  console.log(`[Daemon] Sessions: ${sessionRegistry.size()}`);
-  console.log(`[Daemon] Relay connected: ${relayClient?.isConnected() || false}`);
+  console.log(`[Daemon] Relay: ${RELAY_URL}`);
+  console.log(`[Daemon] Connected: ${relayClient?.isConnected() || false}`);
 
-  // Keep process alive
   await new Promise(() => {});
 }
 
-// Run if executed directly
 if (import.meta.main) {
   startDaemon().catch((error) => {
     console.error('[Daemon] Fatal error:', error);

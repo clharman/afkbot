@@ -105,6 +105,18 @@ async function handleDaemonMessage(
       break;
     }
 
+    case 'session_message': {
+      if (!ws.data.authenticated) return;
+      // Forward conversation message to subscribed mobile clients
+      connectionRegistry.notifySubscribedClients(ws.data.userId, message.sessionId, {
+        type: 'session_message',
+        sessionId: message.sessionId,
+        role: message.role,
+        content: message.content,
+      });
+      break;
+    }
+
     case 'session_status': {
       if (!ws.data.authenticated) return;
       connectionRegistry.updateSessionStatus(message.sessionId, message.status);

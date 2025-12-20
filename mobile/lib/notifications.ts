@@ -35,15 +35,10 @@ export async function registerForPushNotifications(): Promise<string | null> {
   }
 
   // Get the Expo push token
-  try {
-    const tokenData = await Notifications.getExpoPushTokenAsync({
-      projectId: 'your-project-id', // Replace with actual Expo project ID
-    });
-    return tokenData.data;
-  } catch (err) {
-    console.error('Failed to get push token:', err);
-    return null;
-  }
+  // TODO: Set up Expo project and add projectId for push notifications
+  // For now, skip push token registration
+  console.log('Push notifications not configured yet (missing Expo projectId)');
+  return null;
 }
 
 export function setupNotificationListeners() {
@@ -64,8 +59,8 @@ export function setupNotificationListeners() {
 
   // Return cleanup function
   return () => {
-    Notifications.removeNotificationSubscription(notificationListener);
-    Notifications.removeNotificationSubscription(responseListener);
+    notificationListener.remove();
+    responseListener.remove();
   };
 }
 
