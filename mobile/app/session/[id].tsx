@@ -8,19 +8,82 @@ import {
   Platform,
   FlatList,
   ScrollView,
+  Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { useStore } from '@/lib/store';
 import { relay } from '@/lib/relay';
 import { useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '@/lib/types';
 import Markdown from 'react-native-markdown-display';
+// Speech recognition - may not be available in Expo Go
+let ExpoSpeechRecognitionModule: any = null;
+let useSpeechRecognitionEvent: any = () => {};
+
+try {
+  const speechModule = require('expo-speech-recognition');
+  ExpoSpeechRecognitionModule = speechModule.ExpoSpeechRecognitionModule;
+  useSpeechRecognitionEvent = speechModule.useSpeechRecognitionEvent;
+} catch {
+  // Module not available (e.g., in Expo Go)
+}
 
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { sessions, sessionMessages, setCurrentSession, clearMessages } = useStore();
   const [input, setInput] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+
+  // Speech recognition event handlers
+  useSpeechRecognitionEvent('start', () => {
+    setIsListening(true);
+  });
+
+  useSpeechRecognitionEvent('end', () => {
+    setIsListening(false);
+  });
+
+  useSpeechRecognitionEvent('result', (event) => {
+    // Get the latest transcript
+    const transcript = event.results[event.results.length - 1]?.transcript;
+    if (transcript) {
+      setInput((prev) => prev + (prev ? ' ' : '') + transcript);
+    }
+  });
+
+  useSpeechRecognitionEvent('error', (event) => {
+    console.error('Speech recognition error:', event.error);
+    setIsListening(false);
+    Alert.alert('Voice Input Error', event.error);
+  });
+
+  const speechAvailable = ExpoSpeechRecognitionModule !== null;
+
+  async function toggleListening() {
+    if (!ExpoSpeechRecognitionModule) {
+      Alert.alert('Not Available', 'Voice input requires a development build. It is not available in Expo Go.');
+      return;
+    }
+
+    if (isListening) {
+      ExpoSpeechRecognitionModule.stop();
+    } else {
+      const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!result.granted) {
+        Alert.alert('Permission Required', 'Microphone permission is needed for voice input.');
+        return;
+      }
+
+      ExpoSpeechRecognitionModule.start({
+        lang: 'en-US',
+        interimResults: true,
+        continuous: false,
+      });
+    }
+  }
 
   const session = sessions.find((s) => s.id === id);
   const messages = sessionMessages.get(id || '') || [];
@@ -166,19 +229,35 @@ export default function SessionScreen() {
             style={styles.input}
             value={input}
             onChangeText={setInput}
-            placeholder="Send a message..."
-            placeholderTextColor="#6b7280"
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
+            placeholder={isListening ? "Listening..." : "Send a message..."}
+            placeholderTextColor={isListening ? "#818cf8" : "#6b7280"}
             multiline
             maxLength={10000}
             editable={session.status !== 'ended'}
           />
-          <TouchableOpacity
-            style={[styles.sendButton, !input.trim() && styles.sendButtonDisabled]}
-            onPress={handleSend}
-            disabled={!input.trim() || session.status === 'ended'}
-          >
-            <Text style={styles.sendButtonText}>Send</Text>
-          </TouchableOpacity>
+          {input.trim() || inputFocused ? (
+            <TouchableOpacity
+              style={[styles.sendButton, !input.trim() && styles.sendButtonDisabled]}
+              onPress={handleSend}
+              disabled={!input.trim() || session.status === 'ended'}
+            >
+              <Text style={styles.sendButtonText}>Send</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.micButton,
+                isListening && styles.micButtonActive,
+                !speechAvailable && styles.micButtonDisabled
+              ]}
+              onPress={toggleListening}
+              disabled={session.status === 'ended'}
+            >
+              <Ionicons name={isListening ? "stop" : "mic"} size={20} color="#fff" />
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
     </>
@@ -305,6 +384,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     maxHeight: 100,
     marginRight: 8,
+  },
+  micButton: {
+    backgroundColor: '#2a2a4a',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  micButtonActive: {
+    backgroundColor: '#ef4444',
+  },
+  micButtonDisabled: {
+    opacity: 0.4,
+  },
+  micButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
   },
   sendButton: {
     backgroundColor: '#6366f1',

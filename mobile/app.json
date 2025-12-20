@@ -38,6 +38,12 @@
           "icon": "./assets/notification-icon.png",
           "color": "#6366f1"
         }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Snowfort to use the microphone for voice input."
+        }
       ]
     ],
     "experiments": {
