@@ -112,6 +112,10 @@ class RelayConnection {
         }
         break;
 
+      case 'session_todos':
+        store.setSessionTodos(message.sessionId, message.todos);
+        break;
+
       case 'session_status': {
         const previousStatus = this.sessionStatuses.get(message.sessionId);
         this.sessionStatuses.set(message.sessionId, message.status);

@@ -102,6 +102,10 @@ export class RelayClient {
     this.send({ type: 'session_update', sessionId, name });
   }
 
+  sendSessionTodos(sessionId: string, todos: Array<{ content: string; status: string; activeForm?: string }>): void {
+    this.send({ type: 'session_todos', sessionId, todos } as any);
+  }
+
   sendSessionOutput(sessionId: string, data: string): void {
     this.send({ type: 'session_output', sessionId, data });
   }

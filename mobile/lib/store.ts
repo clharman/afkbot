@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, ChatMessage } from './types';
+import type { Session, ChatMessage, TodoItem } from './types';
 
 interface AppState {
   // Auth
@@ -25,6 +25,11 @@ interface AppState {
   sessionMessages: Map<string, ChatMessage[]>;
   appendMessage: (sessionId: string, role: 'user' | 'assistant', content: string) => void;
   clearMessages: (sessionId: string) => void;
+
+  // Session todos
+  sessionTodos: Map<string, TodoItem[]>;
+  setSessionTodos: (sessionId: string, todos: TodoItem[]) => void;
+  clearTodos: (sessionId: string) => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -71,5 +76,20 @@ export const useStore = create<AppState>((set, get) => ({
       const messages = new Map(state.sessionMessages);
       messages.delete(sessionId);
       return { sessionMessages: messages };
+    }),
+
+  // Session todos
+  sessionTodos: new Map(),
+  setSessionTodos: (sessionId, todos) =>
+    set((state) => {
+      const sessionTodos = new Map(state.sessionTodos);
+      sessionTodos.set(sessionId, todos);
+      return { sessionTodos };
+    }),
+  clearTodos: (sessionId) =>
+    set((state) => {
+      const sessionTodos = new Map(state.sessionTodos);
+      sessionTodos.delete(sessionId);
+      return { sessionTodos };
     }),
 }));

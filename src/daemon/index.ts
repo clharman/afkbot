@@ -17,6 +17,12 @@ interface ParsedMessage {
   isComplete?: boolean; // True if this is a complete response (has stop_reason)
 }
 
+interface TodoItem {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  activeForm?: string;
+}
+
 interface Session {
   id: string;
   name: string;
@@ -32,6 +38,7 @@ interface Session {
   startedAt: Date; // Only process messages after this time
   existingFiles: Set<string>; // Files that existed before session started
   slugFound: boolean; // Whether we've found the session name from JSONL
+  lastTodosHash: string; // Hash of last sent todos to detect changes
 }
 
 // Active sessions
@@ -75,6 +82,23 @@ function extractSlug(line: string): string | null {
     const data = JSON.parse(line);
     if (data.slug && typeof data.slug === 'string') {
       return data.slug;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Extract todos from a JSONL line
+function extractTodos(line: string): TodoItem[] | null {
+  try {
+    const data = JSON.parse(line);
+    if (data.todos && Array.isArray(data.todos) && data.todos.length > 0) {
+      return data.todos.map((t: any) => ({
+        content: t.content || '',
+        status: t.status || 'pending',
+        activeForm: t.activeForm,
+      }));
     }
     return null;
   } catch {
@@ -200,6 +224,17 @@ async function processJsonlUpdates(session: Session): Promise<void> {
           if (relayClient?.isConnected()) {
             relayClient.sendSessionUpdate(session.id, slug);
           }
+        }
+      }
+
+      // Extract and send todos if they've changed
+      const todos = extractTodos(line);
+      if (todos && relayClient?.isConnected()) {
+        const todosHash = Bun.hash(JSON.stringify(todos)).toString();
+        if (todosHash !== session.lastTodosHash) {
+          session.lastTodosHash = todosHash;
+          console.log(`[Daemon] Session ${session.id} todos updated: ${todos.length} items`);
+          relayClient.sendSessionTodos(session.id, todos);
         }
       }
 
@@ -333,6 +368,7 @@ async function handleSessionMessage(socket: Socket<unknown>, message: any): Prom
         startedAt: new Date(),
         existingFiles,
         slugFound: false,
+        lastTodosHash: '',
       };
       sessions.set(message.id, session);
       console.log(`[Daemon] Session started: ${message.id} - ${session.name}`);

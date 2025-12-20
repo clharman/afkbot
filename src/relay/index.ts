@@ -108,6 +108,18 @@ async function handleDaemonMessage(
       break;
     }
 
+    case 'session_todos': {
+      if (!ws.data.authenticated) return;
+      connectionRegistry.updateSessionTodos(message.sessionId, message.todos);
+      // Forward to subscribed mobile clients
+      connectionRegistry.notifySubscribedClients(ws.data.userId, message.sessionId, {
+        type: 'session_todos',
+        sessionId: message.sessionId,
+        todos: message.todos,
+      });
+      break;
+    }
+
     case 'session_output': {
       if (!ws.data.authenticated) return;
       // Forward to subscribed mobile clients

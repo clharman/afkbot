@@ -15,7 +15,7 @@ import { useLocalSearchParams, Stack } from 'expo-router';
 import { useStore } from '@/lib/store';
 import { relay } from '@/lib/relay';
 import { useEffect, useRef, useState } from 'react';
-import type { ChatMessage } from '@/lib/types';
+import type { ChatMessage, TodoItem } from '@/lib/types';
 import Markdown from 'react-native-markdown-display';
 // Speech recognition - may not be available in Expo Go
 let ExpoSpeechRecognitionModule: any = null;
@@ -29,9 +29,78 @@ try {
   // Module not available (e.g., in Expo Go)
 }
 
+// Collapsible Todo Section component
+function TodoSection({ todos }: { todos: TodoItem[] }) {
+  const [expanded, setExpanded] = useState(true);
+
+  if (todos.length === 0) return null;
+
+  const completed = todos.filter((t) => t.status === 'completed').length;
+  const inProgress = todos.filter((t) => t.status === 'in_progress').length;
+  const pending = todos.filter((t) => t.status === 'pending').length;
+
+  const statusIcon = (status: TodoItem['status']) => {
+    switch (status) {
+      case 'completed':
+        return <Ionicons name="checkmark-circle" size={16} color="#4ade80" />;
+      case 'in_progress':
+        return <Ionicons name="sync" size={16} color="#818cf8" />;
+      case 'pending':
+        return <Ionicons name="ellipse-outline" size={16} color="#6b7280" />;
+    }
+  };
+
+  return (
+    <View style={todoStyles.container}>
+      <TouchableOpacity
+        style={todoStyles.header}
+        onPress={() => setExpanded(!expanded)}
+        activeOpacity={0.7}
+      >
+        <View style={todoStyles.headerLeft}>
+          <Ionicons name="list" size={16} color="#818cf8" />
+          <Text style={todoStyles.headerTitle}>Tasks</Text>
+          <View style={todoStyles.badge}>
+            <Text style={todoStyles.badgeText}>
+              {completed}/{todos.length}
+            </Text>
+          </View>
+        </View>
+        <Ionicons
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color="#6b7280"
+        />
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={todoStyles.list}>
+          {todos.map((todo, index) => (
+            <View key={index} style={todoStyles.item}>
+              {statusIcon(todo.status)}
+              <Text
+                style={[
+                  todoStyles.itemText,
+                  todo.status === 'completed' && todoStyles.completedText,
+                  todo.status === 'in_progress' && todoStyles.inProgressText,
+                ]}
+                numberOfLines={2}
+              >
+                {todo.status === 'in_progress' && todo.activeForm
+                  ? todo.activeForm
+                  : todo.content}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { sessions, sessionMessages, setCurrentSession, clearMessages } = useStore();
+  const { sessions, sessionMessages, sessionTodos, setCurrentSession, clearMessages, clearTodos } = useStore();
   const [input, setInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
@@ -87,12 +156,14 @@ export default function SessionScreen() {
 
   const session = sessions.find((s) => s.id === id);
   const messages = sessionMessages.get(id || '') || [];
+  const todos = sessionTodos.get(id || '') || [];
 
   useEffect(() => {
     if (id) {
       setCurrentSession(id);
-      // Clear local messages before subscribing - relay will replay history
+      // Clear local messages and todos before subscribing - relay will replay history
       clearMessages(id);
+      clearTodos(id);
       relay.subscribeToSession(id);
 
       return () => {
@@ -208,6 +279,8 @@ export default function SessionScreen() {
             <Text style={styles.statusText}>{session.status}</Text>
           </View>
         </View>
+
+        <TodoSection todos={todos} />
 
         <FlatList
           ref={flatListRef}
@@ -422,5 +495,64 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginTop: 32,
+  },
+});
+
+const todoStyles = StyleSheet.create({
+  container: {
+    backgroundColor: '#1a1a2e',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a4a',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerTitle: {
+    color: '#e5e7eb',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  badge: {
+    backgroundColor: '#2a2a4a',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  badgeText: {
+    color: '#9ca3af',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  list: {
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    gap: 6,
+  },
+  item: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  itemText: {
+    color: '#9ca3af',
+    fontSize: 13,
+    flex: 1,
+    lineHeight: 18,
+  },
+  completedText: {
+    color: '#6b7280',
+    textDecorationLine: 'line-through',
+  },
+  inProgressText: {
+    color: '#e5e7eb',
   },
 });

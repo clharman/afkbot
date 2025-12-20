@@ -16,9 +16,16 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface TodoItem {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  activeForm?: string;
+}
+
 export interface TrackedSession extends Session {
   daemonWs: ServerWebSocket<ClientData> | null;
   messages: ChatMessage[]; // Buffer of recent messages
+  todos: TodoItem[]; // Current todo list
 }
 
 class ConnectionRegistry {
@@ -80,11 +87,12 @@ class ConnectionRegistry {
   }
 
   // Register a new session from a daemon
-  registerSession(ws: ServerWebSocket<ClientData>, session: Omit<TrackedSession, 'daemonWs' | 'messages'>): void {
+  registerSession(ws: ServerWebSocket<ClientData>, session: Omit<TrackedSession, 'daemonWs' | 'messages' | 'todos'>): void {
     const trackedSession: TrackedSession = {
       ...session,
       daemonWs: ws,
       messages: [],
+      todos: [],
     };
     this.sessions.set(session.id, trackedSession);
 
@@ -119,6 +127,15 @@ class ConnectionRegistry {
     if (session) {
       session.name = name;
       console.log(`[Connections] Session ${sessionId.slice(0, 8)} renamed to: ${name}`);
+    }
+  }
+
+  // Update session todos
+  updateSessionTodos(sessionId: string, todos: TodoItem[]): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.todos = todos;
+      console.log(`[Connections] Session ${sessionId.slice(0, 8)} todos: ${todos.length} items`);
     }
   }
 
@@ -163,6 +180,15 @@ class ConnectionRegistry {
         sessionId,
         role: msg.role,
         content: msg.content,
+      }));
+    }
+
+    // Send current todos if any
+    if (session.todos.length > 0) {
+      ws.send(JSON.stringify({
+        type: 'session_todos',
+        sessionId,
+        todos: session.todos,
       }));
     }
 
