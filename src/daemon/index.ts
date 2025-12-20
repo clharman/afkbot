@@ -116,11 +116,12 @@ function parseJsonlLine(line: string): ParsedMessage | null {
   }
 }
 
-// Get all JSONL files in the project directory
+// Get all JSONL files in the project directory (excluding agent sidechain files)
 async function getJsonlFiles(projectDir: string): Promise<Set<string>> {
   try {
     const files = await readdir(projectDir);
-    return new Set(files.filter(f => f.endsWith('.jsonl')).map(f => `${projectDir}/${f}`));
+    // Only consider UUID-named JSONL files, not agent-* sidechain files
+    return new Set(files.filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-')).map(f => `${projectDir}/${f}`));
   } catch {
     return new Set();
   }
@@ -130,7 +131,8 @@ async function getJsonlFiles(projectDir: string): Promise<Set<string>> {
 async function findNewJsonlFile(projectDir: string, existingFiles: Set<string>): Promise<string | null> {
   try {
     const files = await readdir(projectDir);
-    const jsonlFiles = files.filter(f => f.endsWith('.jsonl'));
+    // Only consider UUID-named JSONL files, not agent-* sidechain files
+    const jsonlFiles = files.filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-'));
 
     // Find files that are NEW (not in existingFiles) and not claimed by another session
     const newFiles = jsonlFiles
