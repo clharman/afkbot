@@ -1,8 +1,9 @@
-import { Client, GatewayIntentBits, Events, ChannelType } from 'discord.js';
+import { Client, GatewayIntentBits, Events, ChannelType, AttachmentBuilder } from 'discord.js';
 import type { DiscordConfig } from './types';
 import { SessionManager, type SessionInfo } from '../slack/session-manager';
 import { ChannelManager } from './channel-manager';
 import { markdownToSlack, chunkMessage, formatSessionStatus, formatTodos } from '../slack/message-formatter';
+import { extractImagePaths } from '../utils/image-extractor';
 
 export function createDiscordApp(config: DiscordConfig) {
   const client = new Client({
@@ -107,6 +108,22 @@ export function createDiscordApp(config: DiscordConfig) {
             const chunks = chunkMessage(formatted);
             for (const chunk of chunks) {
               await discordChannel.send(chunk);
+            }
+
+            // Extract and upload any images mentioned in the response
+            const session = sessionManager.getSession(sessionId);
+            const images = extractImagePaths(content, session?.cwd);
+            for (const image of images) {
+              try {
+                console.log(`[Discord] Uploading image: ${image.resolvedPath}`);
+                const attachment = new AttachmentBuilder(image.resolvedPath);
+                await discordChannel.send({
+                  content: `📎 ${image.originalPath}`,
+                  files: [attachment],
+                });
+              } catch (err) {
+                console.error('[Discord] Failed to upload image:', err);
+              }
             }
           }
         }

@@ -1,4 +1,5 @@
 import { App, LogLevel } from '@slack/bolt';
+import { createReadStream } from 'fs';
 import type { SlackConfig } from './types';
 import { SessionManager, type SessionInfo } from './session-manager';
 import { ChannelManager } from './channel-manager';
@@ -8,6 +9,7 @@ import {
   formatSessionStatus,
   formatTodos,
 } from './message-formatter';
+import { extractImagePaths } from '../utils/image-extractor';
 
 export function createSlackApp(config: SlackConfig) {
   const app = new App({
@@ -131,6 +133,23 @@ export function createSlackApp(config: SlackConfig) {
               });
             } catch (err) {
               console.error('[Slack] Failed to post message:', err);
+            }
+          }
+
+          // Extract and upload any images mentioned in the response
+          const session = sessionManager.getSession(sessionId);
+          const images = extractImagePaths(content, session?.cwd);
+          for (const image of images) {
+            try {
+              console.log(`[Slack] Uploading image: ${image.resolvedPath}`);
+              await app.client.files.uploadV2({
+                channel_id: channel.channelId,
+                file: createReadStream(image.resolvedPath),
+                filename: image.resolvedPath.split('/').pop() || 'image',
+                initial_comment: `📎 ${image.originalPath}`,
+              });
+            } catch (err) {
+              console.error('[Slack] Failed to upload image:', err);
             }
           }
         }
