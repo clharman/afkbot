@@ -57,9 +57,10 @@ afk-code help               Show help
 ### Slack Slash Commands
 
 - `/afk` - List active sessions
-- `/background` - Send Ctrl+B (background mode)
-- `/interrupt` - Send Escape (interrupt)
+- `/background` - Send Ctrl+B (background signal)
+- `/interrupt` - Send Escape (interrupt signal)
 - `/mode` - Send Shift+Tab (toggle mode)
+    - Not recommended since you don't get feedback on what mode you're in
 
 ## Installation Options
 
@@ -90,6 +91,10 @@ Requires Node.js 18+.
 
 - Does not support plan mode or responding to Claude Code's form-based questions (AskUserQuestion)
 - Does not send tool calls or results
+
+## Disclaimer
+
+This project is not affiliated with Anthropic. Use at your own risk.
 
 ## License
 
