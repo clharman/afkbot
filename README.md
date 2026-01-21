@@ -2,8 +2,7 @@
 
 Monitor and interact with Claude Code sessions from Slack or Discord. Respond from your phone while AFK.
 
-<img height="400" alt="image" src="https://github.com/user-attachments/assets/91b460c2-dfd6-47d7-beea-088aecfc0c23" />
-
+![square-image](https://github.com/user-attachments/assets/83083b63-9ca2-4ef0-b83d-fcc51bd2fff9)
 
 ## Quick Start (Slack)
 
