@@ -2,48 +2,17 @@
 
 Monitor and interact with Claude Code sessions from Slack, Discord, or Telegram. Respond from your phone while AFK.
 
-![square-image](https://github.com/user-attachments/assets/83083b63-9ca2-4ef0-b83d-fcc51bd2fff9)
+<img src="https://github.com/user-attachments/assets/83083b63-9ca2-4ef0-b83d-fcc51bd2fff9" alt="AFK Code iPhone Slack screenshot" width="400">
 
-## Quick Start (Slack)
+## Client Comparison
 
-```bash
-# 1. Create a Slack app at https://api.slack.com/apps
-#    Click "Create New App" → "From manifest" → paste slack-manifest.json
+Telegram and Discord are recommended.
 
-# 2. Install to your workspace and get credentials:
-#    - Bot Token (xoxb-...) from OAuth & Permissions
-#    - App Token (xapp-...) from Basic Information → App-Level Tokens (needs connections:write)
-#    - Your User ID from your Slack profile → "..." → Copy member ID
-
-# 3. Configure and run
-npx afk-code slack setup   # Enter your credentials
-npx afk-code slack         # Start the bot
-
-# 4. In another terminal, start a monitored Claude session
-npx afk-code run -- claude
-```
-
-A new channel is created for each session. Messages relay bidirectionally.
-
-## Quick Start (Discord)
-
-```bash
-# 1. Create a Discord app at https://discord.com/developers/applications
-#    - Go to Bot → Reset Token → copy it
-#    - Enable "Message Content Intent"
-#    - Go to OAuth2 → URL Generator → select "bot" scope
-#    - Select permissions: Send Messages, Manage Channels, Read Message History
-#    - Open the generated URL to invite the bot
-
-# 2. Get your User ID (enable Developer Mode, right-click your name → Copy User ID)
-
-# 3. Configure and run
-npx afk-code discord setup   # Enter your credentials
-npx afk-code discord         # Start the bot
-
-# 4. In another terminal, start a monitored Claude session
-npx afk-code run -- claude
-```
+| | Telegram | Discord | Slack |
+|---|---|---|---|
+| Siri integration | Receive & Send | Receive only | Receive only |
+| Multi-session support | One at a time (switchable) | Yes | Yes |
+| Permissions required | Personal | Personal | Admin |
 
 ## Quick Start (Telegram)
 
@@ -62,19 +31,60 @@ npx afk-code telegram setup   # Enter your credentials
 npx afk-code telegram         # Start the bot
 
 # 4. In another terminal, start a monitored Claude session
-npx afk-code run -- claude
+npx afk-code claude
 ```
+
+## Quick Start (Discord)
+
+```bash
+# 1. Create a Discord app at https://discord.com/developers/applications
+#    - Go to Bot → Reset Token → copy it
+#    - Enable "Message Content Intent"
+#    - Go to OAuth2 → URL Generator → select "bot" scope
+#    - Select permissions: Send Messages, Manage Channels, Read Message History
+#    - Open the generated URL to invite the bot
+
+# 2. Get your User ID (enable Developer Mode, right-click your name → Copy User ID)
+
+# 3. Configure and run
+npx afk-code discord setup   # Enter your credentials
+npx afk-code discord         # Start the bot
+
+# 4. In another terminal, start a monitored Claude session
+npx afk-code claude
+```
+
+## Quick Start (Slack)
+
+```bash
+# 1. Create a Slack app at https://api.slack.com/apps
+#    Click "Create New App" → "From manifest" → paste slack-manifest.json
+
+# 2. Install to your workspace and get credentials:
+#    - Bot Token (xoxb-...) from OAuth & Permissions
+#    - App Token (xapp-...) from Basic Information → App-Level Tokens (needs connections:write)
+#    - Your User ID from your Slack profile → "..." → Copy member ID
+
+# 3. Configure and run
+npx afk-code slack setup   # Enter your credentials
+npx afk-code slack         # Start the bot
+
+# 4. In another terminal, start a monitored Claude session
+npx afk-code claude
+```
+
+A new channel is created for each session. Messages relay bidirectionally.
 
 ## Commands
 
 ```
-afk-code slack setup        Configure Slack credentials
-afk-code slack              Run the Slack bot
-afk-code discord setup      Configure Discord credentials
-afk-code discord            Run the Discord bot
 afk-code telegram setup     Configure Telegram credentials
 afk-code telegram           Run the Telegram bot
-afk-code run -- <command>   Start a monitored session
+afk-code discord setup      Configure Discord credentials
+afk-code discord            Run the Discord bot
+afk-code slack setup        Configure Slack credentials
+afk-code slack              Run the Slack bot
+afk-code <command> [args]   Start a monitored session
 afk-code help               Show help
 ```
 
@@ -103,7 +113,7 @@ npx afk-code <command>
 git clone https://github.com/clharman/afk-code.git
 cd afk-code && npm install
 npm run dev -- slack
-npm run dev -- run -- claude
+npm run dev -- claude
 ```
 
 Requires Node.js 18+.
@@ -111,7 +121,7 @@ Requires Node.js 18+.
 ## How It Works
 
 1. `afk-code slack`, `afk-code discord`, or `afk-code telegram` starts a bot that listens for sessions
-2. `afk-code run -- claude` spawns Claude in a PTY and connects to the bot via Unix socket
+2. `afk-code claude` spawns Claude in a PTY and connects to the bot via Unix socket
 3. The bot watches Claude's JSONL files for messages and relays them to chat
 4. Messages you send in chat are forwarded to the terminal
 

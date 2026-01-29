@@ -29,12 +29,12 @@ afk-code telegram setup
 afk-code telegram
 
 # Start a monitored Claude Code session (in another terminal)
-afk-code run -- claude
+afk-code claude
 ```
 
 ### Key Files
 - `src/cli/index.ts` - CLI entry point
-- `src/cli/run.ts` - `afk-code run` command (PTY + JSONL watching)
+- `src/cli/run.ts` - Session runner (PTY + JSONL watching)
 - `src/cli/slack.ts` - Slack setup and run commands
 - `src/cli/discord.ts` - Discord setup and run commands
 - `src/cli/telegram.ts` - Telegram setup and run commands

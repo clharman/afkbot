@@ -1,7 +1,7 @@
 import { Bot, Context } from 'grammy';
 import type { TelegramConfig } from './types.js';
 import { SessionManager, type SessionInfo } from '../slack/session-manager.js';
-import { chunkMessage, formatSessionStatus, formatTodos } from '../slack/message-formatter.js';
+import { chunkMessage, formatTodos } from '../slack/message-formatter.js';
 
 // Telegram has a 4096 character limit per message
 const MAX_MESSAGE_LENGTH = 4000;
@@ -44,14 +44,23 @@ export function createTelegramApp(config: TelegramConfig) {
     processingQueue = false;
   }
 
-  async function sendMessage(text: string, parseMode: 'Markdown' | 'HTML' | undefined = 'Markdown') {
+  async function sendMessage(
+    text: string,
+    parseMode: 'Markdown' | 'HTML' | undefined = 'Markdown',
+    options?: { disable_notification?: boolean }
+  ) {
     messageQueue.push(async () => {
       try {
-        await bot.api.sendMessage(config.chatId, text, { parse_mode: parseMode });
+        await bot.api.sendMessage(config.chatId, text, {
+          parse_mode: parseMode,
+          disable_notification: options?.disable_notification,
+        });
       } catch (err: any) {
         // If markdown fails, try without formatting
         if (parseMode && err.message?.includes('parse')) {
-          await bot.api.sendMessage(config.chatId, text);
+          await bot.api.sendMessage(config.chatId, text, {
+            disable_notification: options?.disable_notification,
+          });
         } else {
           throw err;
         }
@@ -60,11 +69,15 @@ export function createTelegramApp(config: TelegramConfig) {
     processQueue();
   }
 
-  async function sendChunkedMessage(text: string, prefix?: string) {
+  async function sendChunkedMessage(
+    text: string,
+    prefix?: string,
+    options?: { disable_notification?: boolean }
+  ) {
     const chunks = chunkMessage(text, MAX_MESSAGE_LENGTH);
     for (let i = 0; i < chunks.length; i++) {
-      const chunk = prefix && i === 0 ? `${prefix}\n\n${chunks[i]}` : chunks[i];
-      await sendMessage(chunk);
+      const chunk = prefix && i === 0 ? `${prefix} ${chunks[i]}` : chunks[i];
+      await sendMessage(chunk, 'Markdown', options);
     }
   }
 
@@ -77,10 +90,14 @@ export function createTelegramApp(config: TelegramConfig) {
         lastActivity: new Date(),
       });
 
+      // Format command name: "claude --foo --bar" → "claude (foo, bar)"
+      const parts = session.name.split(' ');
+      const cmd = parts[0];
+      const args = parts.slice(1).map((a) => a.replace(/^-+/, ''));
+      const sessionLabel = args.length > 0 ? `${cmd} (${args.join(', ')})` : cmd;
+
       await sendMessage(
-        `*[${session.name}]* ${formatSessionStatus(session.status)}\n` +
-          `Session started\n` +
-          `\`${session.cwd}\``
+        `Session started: ${sessionLabel}\n` + `Directory: \`${session.cwd}\``
       );
     },
 
@@ -90,7 +107,7 @@ export function createTelegramApp(config: TelegramConfig) {
 
       activeSessions.delete(sessionId);
 
-      await sendMessage(`*[${name}]* Session ended`);
+      await sendMessage(`Session ended: ${name}`);
     },
 
     onSessionUpdate: async (sessionId, name) => {
@@ -120,9 +137,9 @@ export function createTelegramApp(config: TelegramConfig) {
           telegramSentMessages.delete(contentKey);
           return;
         }
-        await sendChunkedMessage(content, `*[${tracking.sessionName}]* *User:*`);
+        await sendChunkedMessage(content, `_User (terminal):_`, { disable_notification: true });
       } else {
-        await sendChunkedMessage(content, `*[${tracking.sessionName}]* *Claude:*`);
+        await sendChunkedMessage(content, `_Claude Code:_`);
       }
     },
 
@@ -131,7 +148,7 @@ export function createTelegramApp(config: TelegramConfig) {
       if (!tracking || todos.length === 0) return;
 
       const todosText = formatTodos(todos);
-      await sendMessage(`*[${tracking.sessionName}]* *Tasks:*\n${todosText}`);
+      await sendMessage(`_Claude Code:_ *Tasks:*\n${todosText}`);
     },
 
     onToolCall: async (_sessionId, _tool) => {
@@ -150,7 +167,7 @@ export function createTelegramApp(config: TelegramConfig) {
         ? 'Planning mode - Claude is designing a solution'
         : 'Execution mode - Claude is implementing';
 
-      await sendMessage(`*[${tracking.sessionName}]* ${status}`);
+      await sendMessage(`_Claude Code:_ ${status}`);
     },
   });
 

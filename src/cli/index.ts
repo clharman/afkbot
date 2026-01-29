@@ -60,31 +60,31 @@ async function main() {
 AFK Code - Monitor Claude Code sessions from Slack/Discord/Telegram
 
 Commands:
-  slack              Run the Slack bot
-  slack setup        Configure Slack integration
-  discord            Run the Discord bot
-  discord setup      Configure Discord integration
   telegram           Run the Telegram bot
   telegram setup     Configure Telegram integration
-  run -- <command>   Start a monitored session
+  discord            Run the Discord bot
+  discord setup      Configure Discord integration
+  slack              Run the Slack bot
+  slack setup        Configure Slack integration
+  <command> [args]   Start a monitored session
   help               Show this help message
 
 Examples:
-  afk-code slack setup      # First-time Slack configuration
-  afk-code slack            # Start the Slack bot
-  afk-code discord setup    # First-time Discord configuration
-  afk-code discord          # Start the Discord bot
   afk-code telegram setup   # First-time Telegram configuration
   afk-code telegram         # Start the Telegram bot
-  afk-code run -- claude    # Start a Claude Code session
+  afk-code discord setup    # First-time Discord configuration
+  afk-code discord          # Start the Discord bot
+  afk-code slack setup      # First-time Slack configuration
+  afk-code slack            # Start the Slack bot
+  afk-code claude           # Start a Claude Code session
 `);
       break;
     }
 
     default: {
-      console.error(`Unknown command: ${command}`);
-      console.error('Run "afk-code help" for usage');
-      process.exit(1);
+      // Treat unknown commands as a program to run
+      await run(args);
+      break;
     }
   }
 }
