@@ -4,7 +4,7 @@
  */
 
 import { watch, type FSWatcher } from 'fs';
-import { readdir, readFile, stat, unlink } from 'fs/promises';
+import { readdir, readFile, stat, unlink, mkdir } from 'fs/promises';
 import { createServer, type Server, type Socket } from 'net';
 import { createHash } from 'crypto';
 import type { TodoItem } from '../types.js';
@@ -403,8 +403,10 @@ export class SessionManager {
       console.log(`[SessionManager] Waiting for JSONL changes in ${session.projectDir}`);
     }
 
-    // Watch directory for changes
+    // Watch directory for changes - create it if it doesn't exist yet
+    // (Claude Code creates this directory lazily on first conversation activity)
     try {
+      await mkdir(session.projectDir, { recursive: true });
       session.watcher = watch(session.projectDir, { recursive: false }, async (_, filename) => {
         if (!filename?.endsWith('.jsonl')) return;
 
